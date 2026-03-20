@@ -11,7 +11,11 @@ services:
     env_file: .env
 
   dash-ui:
-    build: ./client
+    build:
+      context: ./client
+      args:
+        VITE_API_DOMAIN: ${VITE_API_DOMAIN}
+        VITE_DASHBOARD_DOMAIN: ${VITE_DASHBOARD_DOMAIN}
     container_name: enclave-ui
     restart: always
     ports:
