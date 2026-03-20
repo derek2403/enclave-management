@@ -18,7 +18,8 @@ app.use(express.json({ limit: '5mb' }));
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: process.env.CORS_ORIGIN, credentials: true } });
 
-const HOST_ROOT = '/host';
+const HOST_ROOT = '/host';       // read-only full host filesystem (for stats)
+const DATA_ROOT = '/data';       // read-write user home (/home/ubuntu)
 const PROJECTS_ROOT = '/app/projects';
 
 // Helper: resolve and validate path stays within a root
@@ -76,59 +77,38 @@ collectStats();
 // GET snapshot of stats (for initial load)
 app.get('/api/stats', (req, res) => res.json(cachedStats));
 
-// --- FILE API ---
+// --- FILE API (all operations use DATA_ROOT = /data = /home/ubuntu on host) ---
 
-// List directory (browsing host filesystem)
-app.get('/api/files/list', async (req, res) => {
-    const resolved = safePath(req.query.path || '', HOST_ROOT);
-    if (!resolved) return res.status(403).json({ error: "Forbidden" });
-    try {
-        const entries = await fs.readdir(resolved, { withFileTypes: true });
-        const files = await Promise.all(entries
-            .filter(f => !f.name.startsWith('.')) // hide dotfiles by default unless requested
-            .map(async (f) => {
-                const fullPath = path.join(resolved, f.name);
-                const relativePath = path.relative(HOST_ROOT, fullPath);
-                let stat = null;
-                try { stat = await fs.stat(fullPath); } catch (e) {}
-                return {
-                    name: f.name,
-                    isDir: f.isDirectory(),
-                    path: relativePath,
-                    size: stat?.size || 0,
-                    modified: stat?.mtime || null,
-                };
-            }));
-        res.json(files);
-    } catch (err) { res.status(500).json({ error: "Cannot read directory" }); }
-});
+function listDir(root, filterDots) {
+    return async (req, res) => {
+        const p = safePath(req.query.path || '', root);
+        if (!p) return res.status(403).json({ error: "Forbidden" });
+        try {
+            const entries = await fs.readdir(p, { withFileTypes: true });
+            const files = await Promise.all(
+                entries.filter(f => !filterDots || !f.name.startsWith('.')).map(async (f) => {
+                    const fullPath = path.join(p, f.name);
+                    let stat = null;
+                    try { stat = await fs.stat(fullPath); } catch (e) {}
+                    return {
+                        name: f.name,
+                        isDir: f.isDirectory(),
+                        path: path.relative(root, fullPath),
+                        size: stat?.size || 0,
+                        modified: stat?.mtime || null,
+                    };
+                }));
+            res.json(files);
+        } catch (err) { res.status(500).json({ error: "Cannot read directory" }); }
+    };
+}
 
-// List with hidden files
-app.get('/api/files/list-all', async (req, res) => {
-    const resolved = safePath(req.query.path || '', HOST_ROOT);
-    if (!resolved) return res.status(403).json({ error: "Forbidden" });
-    try {
-        const entries = await fs.readdir(resolved, { withFileTypes: true });
-        const files = await Promise.all(entries.map(async (f) => {
-            const fullPath = path.join(resolved, f.name);
-            const relativePath = path.relative(HOST_ROOT, fullPath);
-            let stat = null;
-            try { stat = await fs.stat(fullPath); } catch (e) {}
-            return {
-                name: f.name,
-                isDir: f.isDirectory(),
-                path: relativePath,
-                size: stat?.size || 0,
-                modified: stat?.mtime || null,
-            };
-        }));
-        res.json(files);
-    } catch (err) { res.status(500).json({ error: "Cannot read directory" }); }
-});
+app.get('/api/files/list', listDir(DATA_ROOT, true));
+app.get('/api/files/list-all', listDir(DATA_ROOT, false));
 
 // Read file content
 app.get('/api/files/read', async (req, res) => {
-    const resolved = safePath(req.query.path, HOST_ROOT);
+    const resolved = safePath(req.query.path, DATA_ROOT);
     if (!resolved) return res.status(403).json({ error: "Forbidden" });
     try {
         const stat = await fs.stat(resolved);
@@ -138,19 +118,19 @@ app.get('/api/files/read', async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Cannot read file" }); }
 });
 
-// Write/save file (projects only — host is read-only)
+// Write/save file
 app.put('/api/files/write', async (req, res) => {
-    const resolved = safePath(req.body.path, HOST_ROOT);
+    const resolved = safePath(req.body.path, DATA_ROOT);
     if (!resolved) return res.status(403).json({ error: "Forbidden" });
     try {
         await fs.writeFile(resolved, req.body.content, 'utf-8');
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: "Cannot write file (may be read-only)" }); }
+    } catch (err) { res.status(500).json({ error: "Cannot write file" }); }
 });
 
 // Create file or directory
 app.post('/api/files/create', async (req, res) => {
-    const resolved = safePath(req.body.path, HOST_ROOT);
+    const resolved = safePath(req.body.path, DATA_ROOT);
     if (!resolved) return res.status(403).json({ error: "Forbidden" });
     try {
         if (req.body.isDir) {
@@ -164,7 +144,7 @@ app.post('/api/files/create', async (req, res) => {
 
 // Delete file or directory
 app.delete('/api/files/delete', async (req, res) => {
-    const resolved = safePath(req.body.path, HOST_ROOT);
+    const resolved = safePath(req.body.path, DATA_ROOT);
     if (!resolved) return res.status(403).json({ error: "Forbidden" });
     try {
         const stat = await fs.stat(resolved);
@@ -179,8 +159,8 @@ app.delete('/api/files/delete', async (req, res) => {
 
 // Rename/move
 app.put('/api/files/rename', async (req, res) => {
-    const oldPath = safePath(req.body.oldPath, HOST_ROOT);
-    const newPath = safePath(req.body.newPath, HOST_ROOT);
+    const oldPath = safePath(req.body.oldPath, DATA_ROOT);
+    const newPath = safePath(req.body.newPath, DATA_ROOT);
     if (!oldPath || !newPath) return res.status(403).json({ error: "Forbidden" });
     try {
         await fs.rename(oldPath, newPath);

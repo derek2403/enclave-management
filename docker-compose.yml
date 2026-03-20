@@ -6,7 +6,8 @@ services:
     ports:
       - "3005:3005"
     volumes:
-      - /:/host:ro # System Monitoring
+      - /:/host:ro # System stats & read-only browsing
+      - /home/ubuntu:/data # User home — read/write for file manager
       - /home/ubuntu/projects:/app/projects # Terminal workspace
     env_file: .env
 

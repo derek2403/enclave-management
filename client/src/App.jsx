@@ -360,7 +360,7 @@ export default function App() {
                   </div>
                   <span className="text-[11px] font-medium text-gray-700">Terminal</span>
                 </button>
-                <button onClick={() => { setActiveView('files'); fetchFiles('home/ubuntu/projects'); }}
+                <button onClick={() => { setActiveView('files'); fetchFiles('projects'); }}
                   className="flex flex-col items-center gap-2 p-4 rounded-xl bg-emerald-50 hover:bg-emerald-100 transition group">
                   <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center shadow-md shadow-emerald-200 group-hover:scale-105 transition">
                     <Home size={18} className="text-white" />
