@@ -3,7 +3,8 @@ import io from 'socket.io-client';
 import {
   Terminal as TermIcon, Folder, FileText, ChevronRight, Cpu, Activity,
   HardDrive, Home, ArrowLeft, Trash2, Edit3, Save, X, FolderPlus,
-  FilePlus, RefreshCw, MoreVertical, Eye, Search, Server
+  FilePlus, RefreshCw, MoreVertical, Eye, Search, Server, Clock,
+  Thermometer, ArrowUpRight, ArrowDownLeft, MonitorSmartphone, Wifi
 } from 'lucide-react';
 import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
@@ -11,13 +12,13 @@ import 'xterm/css/xterm.css';
 
 const API_URL = `https://${import.meta.env.VITE_API_DOMAIN}`;
 const socket = io(API_URL, { withCredentials: true });
-
 const fetchOpts = { credentials: 'include' };
 
+// ─── Helpers ────────────────────────────────────────────────
 function formatSize(bytes) {
-  if (bytes === 0) return '—';
+  if (!bytes) return '—';
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
@@ -27,19 +28,68 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function getFileIcon(name, isDir) {
-  if (isDir) return <Folder size={20} className="text-blue-500" />;
-  const ext = name.split('.').pop().toLowerCase();
-  const codeExts = ['js', 'jsx', 'ts', 'tsx', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'css', 'html', 'json', 'yml', 'yaml', 'toml', 'xml', 'sh', 'bash', 'md', 'txt', 'env', 'conf', 'cfg', 'ini', 'sql', 'vue', 'svelte'];
-  if (codeExts.includes(ext)) return <FileText size={20} className="text-violet-500" />;
-  return <FileText size={20} className="text-gray-400" />;
+function formatUptime(seconds) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
+function getFileIcon(name, isDir) {
+  if (isDir) return <Folder size={18} className="text-blue-500" />;
+  const ext = name.split('.').pop().toLowerCase();
+  const codeExts = ['js','jsx','ts','tsx','py','go','rs','java','c','cpp','h','css','html','json','yml','yaml','toml','xml','sh','bash','vue','svelte','rb','php'];
+  const docExts = ['md','txt','env','conf','cfg','ini','sql','log','csv'];
+  if (codeExts.includes(ext)) return <FileText size={18} className="text-violet-500" />;
+  if (docExts.includes(ext)) return <FileText size={18} className="text-emerald-500" />;
+  return <FileText size={18} className="text-gray-400" />;
+}
+
+// ─── Circular Gauge ─────────────────────────────────────────
+function CircularGauge({ value, max, label, color, icon, sub }) {
+  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  const r = 42;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (pct / 100) * circ;
+  const colors = {
+    blue: { stroke: '#3b82f6', bg: '#eff6ff', text: '#2563eb' },
+    violet: { stroke: '#8b5cf6', bg: '#f5f3ff', text: '#7c3aed' },
+    emerald: { stroke: '#10b981', bg: '#ecfdf5', text: '#059669' },
+    orange: { stroke: '#f59e0b', bg: '#fffbeb', text: '#d97706' },
+    red: { stroke: '#ef4444', bg: '#fef2f2', text: '#dc2626' },
+  };
+  const c = colors[color] || colors.blue;
+
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <div className="relative w-[108px] h-[108px]">
+        <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+          <circle cx="50" cy="50" r={r} fill="none" stroke="#f1f5f9" strokeWidth="7" />
+          <circle cx="50" cy="50" r={r} fill="none" stroke={c.stroke} strokeWidth="7"
+            strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset}
+            style={{ transition: 'stroke-dashoffset 0.8s ease' }} />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-xl font-bold" style={{ color: c.text }}>{pct.toFixed(0)}<span className="text-xs font-normal">%</span></span>
+        </div>
+      </div>
+      <div className="text-center">
+        <div className="text-xs font-semibold text-gray-700 flex items-center gap-1 justify-center">{icon}{label}</div>
+        {sub && <div className="text-[11px] text-gray-400">{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main App ───────────────────────────────────────────────
 export default function App() {
-  const [stats, setStats] = useState({ cpu: 0, ram: 0, ramTotal: 0, storage: 0, storageUsed: 0, storageTotal: 0 });
+  const [stats, setStats] = useState({});
   const [currentPath, setCurrentPath] = useState('');
   const [files, setFiles] = useState([]);
-  const [activeView, setActiveView] = useState('files');
+  const [activeView, setActiveView] = useState('dashboard');
+  const [showHidden, setShowHidden] = useState(false);
   const [editorFile, setEditorFile] = useState(null);
   const [editorContent, setEditorContent] = useState('');
   const [editorDirty, setEditorDirty] = useState(false);
@@ -48,56 +98,68 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [notification, setNotification] = useState(null);
+  const [now, setNow] = useState(new Date());
   const termRef = useRef(null);
   const termInitRef = useRef(false);
-  const editorRef = useRef(null);
 
   const notify = useCallback((msg, type = 'success') => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 3000);
   }, []);
 
+  // Clock
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Stats
+  useEffect(() => {
+    // Initial fetch
+    fetch(`${API_URL}/api/stats`, fetchOpts).then(r => r.json()).then(setStats).catch(() => {});
+    socket.on('stats', setStats);
+    return () => socket.off('stats');
+  }, []);
+
+  // Files
   const fetchFiles = useCallback(async (p) => {
+    const endpoint = showHidden ? 'list-all' : 'list';
     try {
-      const res = await fetch(`${API_URL}/api/files/list?path=${encodeURIComponent(p)}`, fetchOpts);
+      const res = await fetch(`${API_URL}/api/files/${endpoint}?path=${encodeURIComponent(p)}`, fetchOpts);
       const data = await res.json();
       if (data.error) { notify(data.error, 'error'); return; }
       setFiles(data.sort((a, b) => b.isDir - a.isDir || a.name.localeCompare(b.name)));
       setCurrentPath(p);
     } catch (e) { notify('Failed to load files', 'error'); }
-  }, [notify]);
+  }, [notify, showHidden]);
 
-  useEffect(() => {
-    socket.on('stats', setStats);
-    fetchFiles('');
-    return () => { socket.off('stats'); };
-  }, [fetchFiles]);
-
+  // Terminal
   useEffect(() => {
     if (activeView !== 'terminal' || termInitRef.current) return;
     termInitRef.current = true;
-    const term = new Terminal({
-      cursorBlink: true,
-      theme: { background: '#1a1b2e', foreground: '#e2e8f0', cursor: '#7c3aed' },
-      fontSize: 13,
-      fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
-      lineHeight: 1.4,
-    });
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    const el = document.getElementById('terminal-box');
-    if (el) {
+    setTimeout(() => {
+      const el = document.getElementById('terminal-box');
+      if (!el) return;
+      const term = new Terminal({
+        cursorBlink: true,
+        theme: { background: '#0f1117', foreground: '#e2e8f0', cursor: '#8b5cf6', selectionBackground: '#8b5cf644' },
+        fontSize: 13, fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace', lineHeight: 1.5,
+      });
+      const fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
       term.open(el);
       fitAddon.fit();
-      const ro = new ResizeObserver(() => fitAddon.fit());
+      socket.emit('terminal_resize', { cols: term.cols, rows: term.rows });
+      const ro = new ResizeObserver(() => { fitAddon.fit(); socket.emit('terminal_resize', { cols: term.cols, rows: term.rows }); });
       ro.observe(el);
-    }
-    socket.on('terminal_output', data => term.write(data));
-    term.onData(data => socket.emit('terminal_input', data));
-    termRef.current = term;
+      socket.on('terminal_output', data => term.write(data));
+      term.onData(data => socket.emit('terminal_input', data));
+      termRef.current = term;
+    }, 100);
     return () => { socket.off('terminal_output'); };
   }, [activeView]);
 
+  // File operations
   const openFile = async (file) => {
     if (file.isDir) { fetchFiles(file.path); return; }
     if (file.size > 5 * 1024 * 1024) { notify('File too large to open (max 5MB)', 'error'); return; }
@@ -106,10 +168,7 @@ export default function App() {
       const res = await fetch(`${API_URL}/api/files/read?path=${encodeURIComponent(file.path)}`, fetchOpts);
       const data = await res.json();
       if (data.error) { notify(data.error, 'error'); setEditorLoading(false); return; }
-      setEditorFile(file);
-      setEditorContent(data.content);
-      setEditorDirty(false);
-      setActiveView('editor');
+      setEditorFile(file); setEditorContent(data.content); setEditorDirty(false); setActiveView('editor');
     } catch (e) { notify('Failed to open file', 'error'); }
     setEditorLoading(false);
   };
@@ -118,29 +177,25 @@ export default function App() {
     if (!editorFile) return;
     try {
       const res = await fetch(`${API_URL}/api/files/write`, {
-        method: 'PUT', ...fetchOpts,
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', ...fetchOpts, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: editorFile.path, content: editorContent }),
       });
       const data = await res.json();
       if (data.error) { notify(data.error, 'error'); return; }
-      setEditorDirty(false);
-      notify('File saved');
-    } catch (e) { notify('Failed to save file', 'error'); }
+      setEditorDirty(false); notify('File saved');
+    } catch (e) { notify('Failed to save', 'error'); }
   };
 
   const createItem = async (name, isDir) => {
     const itemPath = currentPath ? `${currentPath}/${name}` : name;
     try {
       const res = await fetch(`${API_URL}/api/files/create`, {
-        method: 'POST', ...fetchOpts,
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', ...fetchOpts, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: itemPath, isDir }),
       });
       const data = await res.json();
       if (data.error) { notify(data.error, 'error'); return; }
-      notify(isDir ? 'Folder created' : 'File created');
-      fetchFiles(currentPath);
+      notify(isDir ? 'Folder created' : 'File created'); fetchFiles(currentPath);
     } catch (e) { notify('Failed to create', 'error'); }
     setModal(null);
   };
@@ -148,14 +203,12 @@ export default function App() {
   const deleteItem = async (file) => {
     try {
       const res = await fetch(`${API_URL}/api/files/delete`, {
-        method: 'DELETE', ...fetchOpts,
-        headers: { 'Content-Type': 'application/json' },
+        method: 'DELETE', ...fetchOpts, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: file.path }),
       });
       const data = await res.json();
       if (data.error) { notify(data.error, 'error'); return; }
-      notify('Deleted');
-      fetchFiles(currentPath);
+      notify('Deleted'); fetchFiles(currentPath);
     } catch (e) { notify('Failed to delete', 'error'); }
     setContextMenu(null);
   };
@@ -165,274 +218,360 @@ export default function App() {
     const newPath = dir ? `${dir}/${newName}` : newName;
     try {
       const res = await fetch(`${API_URL}/api/files/rename`, {
-        method: 'PUT', ...fetchOpts,
-        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT', ...fetchOpts, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ oldPath: file.path, newPath }),
       });
       const data = await res.json();
       if (data.error) { notify(data.error, 'error'); return; }
-      notify('Renamed');
-      fetchFiles(currentPath);
+      notify('Renamed'); fetchFiles(currentPath);
     } catch (e) { notify('Failed to rename', 'error'); }
     setModal(null);
   };
 
   const breadcrumbs = currentPath ? currentPath.split('/') : [];
-  const filteredFiles = searchQuery
-    ? files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
-    : files;
+  const filteredFiles = searchQuery ? files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase())) : files;
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-800 flex flex-col" onClick={() => setContextMenu(null)}>
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between sticky top-0 z-30 shadow-sm">
+    <div className="min-h-screen bg-[#f0f2f5] text-gray-800 flex flex-col" onClick={() => setContextMenu(null)}>
+      {/* ─── Header ─── */}
+      <header className="bg-white/80 backdrop-blur-md border-b border-gray-200/60 px-6 py-3 flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-gradient-to-br from-violet-500 to-blue-500 rounded-xl flex items-center justify-center">
-            <Server size={18} className="text-white" />
+          <div className="w-9 h-9 bg-gradient-to-br from-violet-600 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg shadow-violet-200">
+            <Server size={17} className="text-white" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-gray-900 leading-tight">Enclave</h1>
-            <p className="text-[11px] text-gray-400">Dev Box Management</p>
+            <h1 className="text-sm font-bold text-gray-900 leading-tight">Enclave</h1>
+            <p className="text-[10px] text-gray-400 font-medium">{stats.hostname || 'Dev Box'}</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <StatPill icon={<Cpu size={14} />} label="CPU" value={`${stats.cpu}%`} color="blue" />
-          <StatPill icon={<Activity size={14} />} label="RAM" value={`${stats.ram}GB`} sub={`/ ${stats.ramTotal}GB`} color="violet" />
-          <StatPill icon={<HardDrive size={14} />} label="Disk" value={`${stats.storageUsed}GB`} sub={`/ ${stats.storageTotal}GB`} color="emerald" />
+        <nav className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+          {[
+            { id: 'dashboard', label: 'Dashboard', icon: <MonitorSmartphone size={15} /> },
+            { id: 'files', label: 'Files', icon: <Folder size={15} /> },
+            { id: 'terminal', label: 'Terminal', icon: <TermIcon size={15} /> },
+          ].map(tab => (
+            <button key={tab.id} onClick={() => { setActiveView(tab.id); if (tab.id === 'files') fetchFiles(currentPath); }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition-all ${activeView === tab.id || (activeView === 'editor' && tab.id === 'files') ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+              {tab.icon} {tab.label}
+            </button>
+          ))}
+        </nav>
+        <div className="text-right">
+          <div className="text-sm font-bold text-gray-900">{now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
+          <div className="text-[10px] text-gray-400">{now.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}</div>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <nav className="w-56 bg-white border-r border-gray-200 p-3 flex flex-col gap-1 shrink-0">
-          <SidebarBtn active={activeView === 'files'} onClick={() => setActiveView('files')} icon={<Folder size={18} />} label="Files" />
-          <SidebarBtn active={activeView === 'terminal'} onClick={() => setActiveView('terminal')} icon={<TermIcon size={18} />} label="Terminal" />
-          {editorFile && (
-            <SidebarBtn active={activeView === 'editor'} onClick={() => setActiveView('editor')} icon={<Edit3 size={18} />} label={editorFile.name} badge={editorDirty ? 'M' : null} />
-          )}
-        </nav>
+      {/* ─── Content ─── */}
+      <main className="flex-1 overflow-auto p-5">
 
-        {/* Main content */}
-        <main className="flex-1 overflow-auto p-5">
-          {/* Files View */}
-          {activeView === 'files' && (
-            <div className="max-w-6xl mx-auto">
-              {/* Toolbar */}
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <button onClick={() => fetchFiles(currentPath.split('/').slice(0, -1).join('/'))}
-                    className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition" title="Go back">
-                    <ArrowLeft size={18} />
-                  </button>
-                  <button onClick={() => fetchFiles('')}
-                    className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition" title="Go home">
-                    <Home size={18} />
-                  </button>
-                  <div className="flex items-center text-sm text-gray-500 ml-2">
-                    <button onClick={() => fetchFiles('')} className="hover:text-violet-600 transition">/</button>
-                    {breadcrumbs.map((crumb, i) => (
-                      <React.Fragment key={i}>
-                        <ChevronRight size={14} className="mx-1 text-gray-300" />
-                        <button
-                          onClick={() => fetchFiles(breadcrumbs.slice(0, i + 1).join('/'))}
-                          className="hover:text-violet-600 transition"
-                        >{crumb}</button>
-                      </React.Fragment>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input
-                      type="text" placeholder="Search files..."
-                      value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                      className="pl-8 pr-3 py-1.5 text-sm bg-gray-100 rounded-lg border border-transparent focus:border-violet-300 focus:bg-white focus:outline-none w-48 transition"
-                    />
-                  </div>
-                  <button onClick={() => fetchFiles(currentPath)}
-                    className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition" title="Refresh">
-                    <RefreshCw size={16} />
-                  </button>
-                  <button onClick={() => setModal({ type: 'newFile' })}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-violet-50 text-violet-600 rounded-lg hover:bg-violet-100 transition">
-                    <FilePlus size={15} /> New File
-                  </button>
-                  <button onClick={() => setModal({ type: 'newFolder' })}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition">
-                    <FolderPlus size={15} /> New Folder
-                  </button>
+        {/* ═══ DASHBOARD ═══ */}
+        {activeView === 'dashboard' && (
+          <div className="max-w-6xl mx-auto grid grid-cols-4 gap-4 auto-rows-min">
+
+            {/* System Status Card - spans 2 cols */}
+            <div className="col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-sm font-bold text-gray-900">System Status</h2>
+                <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full font-medium">
+                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div> Online
                 </div>
               </div>
-
-              {/* File list */}
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
-                <div className="grid grid-cols-[1fr_100px_160px_40px] gap-4 px-4 py-2.5 text-xs font-medium text-gray-400 uppercase tracking-wider border-b border-gray-100">
-                  <span>Name</span>
-                  <span>Size</span>
-                  <span>Modified</span>
-                  <span></span>
-                </div>
-                {filteredFiles.length === 0 && (
-                  <div className="py-16 text-center text-gray-400 text-sm">
-                    {searchQuery ? 'No matching files' : 'This folder is empty'}
-                  </div>
-                )}
-                {filteredFiles.map(f => (
-                  <div key={f.path}
-                    className="grid grid-cols-[1fr_100px_160px_40px] gap-4 px-4 py-2.5 items-center hover:bg-gray-50 border-b border-gray-50 cursor-pointer transition group"
-                    onClick={() => openFile(f)}
-                    onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, file: f }); }}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      {getFileIcon(f.name, f.isDir)}
-                      <span className="text-sm truncate">{f.name}</span>
-                    </div>
-                    <span className="text-xs text-gray-400">{f.isDir ? '—' : formatSize(f.size)}</span>
-                    <span className="text-xs text-gray-400">{formatDate(f.modified)}</span>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, file: f }); }}
-                      className="p-1 rounded hover:bg-gray-200 opacity-0 group-hover:opacity-100 transition"
-                    >
-                      <MoreVertical size={14} className="text-gray-400" />
-                    </button>
-                  </div>
-                ))}
+              <div className="flex items-center justify-around">
+                <CircularGauge value={stats.cpu || 0} max={100} label="CPU" color={stats.cpu > 80 ? 'red' : stats.cpu > 50 ? 'orange' : 'blue'}
+                  icon={<Cpu size={11} />} sub={`${stats.cpuCores || 0} cores`} />
+                <CircularGauge value={stats.ram || 0} max={stats.ramTotal || 1} label="RAM" color="violet"
+                  icon={<Activity size={11} />} sub={`${stats.ram || 0} / ${stats.ramTotal || 0} GB`} />
+                <CircularGauge value={stats.storageUsed || 0} max={stats.storageTotal || 1} label="Storage" color="emerald"
+                  icon={<HardDrive size={11} />} sub={`${stats.storageUsed || 0} / ${stats.storageTotal || 0} GB`} />
               </div>
-              <div className="mt-3 text-xs text-gray-400 text-right">{files.length} items</div>
             </div>
-          )}
 
-          {/* Editor View */}
-          {activeView === 'editor' && editorFile && (
-            <div className="max-w-6xl mx-auto flex flex-col h-[calc(100vh-130px)]">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <button onClick={() => setActiveView('files')}
-                    className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition">
-                    <ArrowLeft size={18} />
-                  </button>
-                  <div>
-                    <h2 className="text-sm font-medium text-gray-900 flex items-center gap-2">
-                      {editorFile.name}
-                      {editorDirty && <span className="w-2 h-2 bg-orange-400 rounded-full"></span>}
-                    </h2>
-                    <p className="text-[11px] text-gray-400">/{editorFile.path}</p>
-                  </div>
+            {/* Temperature Card */}
+            <div className="col-span-1 bg-gradient-to-br from-orange-50 to-amber-50 rounded-2xl p-5 shadow-sm border border-orange-100/50">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center">
+                  <Thermometer size={16} className="text-orange-500" />
                 </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={saveFile}
-                    className={`flex items-center gap-1.5 px-4 py-1.5 text-sm rounded-lg transition ${editorDirty ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-gray-100 text-gray-400 cursor-default'}`}
-                    disabled={!editorDirty}>
-                    <Save size={15} /> Save
-                  </button>
-                  <button onClick={() => { setEditorFile(null); setActiveView('files'); }}
-                    className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition">
-                    <X size={18} />
-                  </button>
+                <span className="text-xs font-bold text-gray-700">Temperature</span>
+              </div>
+              <div className="text-3xl font-bold text-orange-600 mb-1">
+                {stats.cpuTemp ? `${stats.cpuTemp}°C` : 'N/A'}
+              </div>
+              <div className="text-[11px] text-gray-500">
+                {stats.cpuTemp ? (stats.cpuTemp > 70 ? 'Running hot' : stats.cpuTemp > 50 ? 'Warm' : 'Cool') : 'Sensor unavailable'}
+              </div>
+              {stats.cpuTempMax && <div className="text-[10px] text-gray-400 mt-1">Max: {stats.cpuTempMax}°C</div>}
+            </div>
+
+            {/* Uptime Card */}
+            <div className="col-span-1 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-5 shadow-sm border border-blue-100/50">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <Clock size={16} className="text-blue-500" />
+                </div>
+                <span className="text-xs font-bold text-gray-700">Uptime</span>
+              </div>
+              <div className="text-2xl font-bold text-blue-600 mb-1">{formatUptime(stats.uptime || 0)}</div>
+              <div className="text-[11px] text-gray-500">{stats.platform || ''}</div>
+            </div>
+
+            {/* Network Card */}
+            <div className="col-span-2 bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 bg-cyan-50 rounded-lg flex items-center justify-center">
+                  <Wifi size={16} className="text-cyan-500" />
+                </div>
+                <span className="text-xs font-bold text-gray-700">Network</span>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ArrowDownLeft size={14} className="text-emerald-500" />
+                    <span className="text-[11px] font-medium text-gray-500">Download</span>
+                  </div>
+                  <div className="text-xl font-bold text-gray-900">{stats.netDown || 0} <span className="text-xs font-normal text-gray-400">KB/s</span></div>
+                </div>
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ArrowUpRight size={14} className="text-blue-500" />
+                    <span className="text-[11px] font-medium text-gray-500">Upload</span>
+                  </div>
+                  <div className="text-xl font-bold text-gray-900">{stats.netUp || 0} <span className="text-xs font-normal text-gray-400">KB/s</span></div>
                 </div>
               </div>
-              <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+            </div>
+
+            {/* Quick Actions Card */}
+            <div className="col-span-2 bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+              <h3 className="text-xs font-bold text-gray-700 mb-4">Quick Actions</h3>
+              <div className="grid grid-cols-3 gap-3">
+                <button onClick={() => { setActiveView('files'); fetchFiles(''); }}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl bg-blue-50 hover:bg-blue-100 transition group">
+                  <div className="w-10 h-10 bg-blue-500 rounded-xl flex items-center justify-center shadow-md shadow-blue-200 group-hover:scale-105 transition">
+                    <Folder size={18} className="text-white" />
+                  </div>
+                  <span className="text-[11px] font-medium text-gray-700">Files</span>
+                </button>
+                <button onClick={() => setActiveView('terminal')}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl bg-violet-50 hover:bg-violet-100 transition group">
+                  <div className="w-10 h-10 bg-violet-500 rounded-xl flex items-center justify-center shadow-md shadow-violet-200 group-hover:scale-105 transition">
+                    <TermIcon size={18} className="text-white" />
+                  </div>
+                  <span className="text-[11px] font-medium text-gray-700">Terminal</span>
+                </button>
+                <button onClick={() => { setActiveView('files'); fetchFiles('home/ubuntu/projects'); }}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl bg-emerald-50 hover:bg-emerald-100 transition group">
+                  <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center shadow-md shadow-emerald-200 group-hover:scale-105 transition">
+                    <Home size={18} className="text-white" />
+                  </div>
+                  <span className="text-[11px] font-medium text-gray-700">Projects</span>
+                </button>
+              </div>
+            </div>
+
+            {/* System Info Card */}
+            <div className="col-span-4 bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+              <h3 className="text-xs font-bold text-gray-700 mb-3">System Info</h3>
+              <div className="grid grid-cols-4 gap-4 text-xs">
+                <InfoItem label="Hostname" value={stats.hostname || '—'} />
+                <InfoItem label="CPU" value={stats.cpuModel || '—'} />
+                <InfoItem label="Platform" value={stats.platform || '—'} />
+                <InfoItem label="Swap" value={stats.swapTotal ? `${stats.swap} / ${stats.swapTotal} GB` : 'None'} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ═══ FILES ═══ */}
+        {(activeView === 'files') && (
+          <div className="max-w-6xl mx-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <button onClick={() => { const p = currentPath.split('/').slice(0, -1).join('/'); fetchFiles(p); }}
+                  className="p-2 rounded-xl hover:bg-white text-gray-400 hover:text-gray-600 transition shadow-sm bg-white/60"><ArrowLeft size={16} /></button>
+                <button onClick={() => fetchFiles('')}
+                  className="p-2 rounded-xl hover:bg-white text-gray-400 hover:text-gray-600 transition shadow-sm bg-white/60"><Home size={16} /></button>
+                <div className="flex items-center text-sm text-gray-500 ml-2 bg-white rounded-xl px-3 py-1.5 shadow-sm border border-gray-100">
+                  <button onClick={() => fetchFiles('')} className="hover:text-violet-600 transition font-medium">/</button>
+                  {breadcrumbs.map((crumb, i) => (
+                    <React.Fragment key={i}>
+                      <ChevronRight size={13} className="mx-1 text-gray-300" />
+                      <button onClick={() => fetchFiles(breadcrumbs.slice(0, i + 1).join('/'))}
+                        className="hover:text-violet-600 transition">{crumb}</button>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input type="text" placeholder="Search..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 text-xs bg-white rounded-xl border border-gray-100 focus:border-violet-300 focus:outline-none focus:ring-2 focus:ring-violet-100 w-44 transition shadow-sm" />
+                </div>
+                <label className="flex items-center gap-1.5 text-[11px] text-gray-500 bg-white px-3 py-1.5 rounded-xl shadow-sm border border-gray-100 cursor-pointer select-none">
+                  <input type="checkbox" checked={showHidden} onChange={(e) => { setShowHidden(e.target.checked); }} className="accent-violet-500 w-3 h-3" />
+                  Hidden
+                </label>
+                <button onClick={() => fetchFiles(currentPath)} className="p-2 rounded-xl hover:bg-white text-gray-400 hover:text-gray-600 transition shadow-sm bg-white/60"><RefreshCw size={14} /></button>
+                <button onClick={() => setModal({ type: 'newFile' })}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-violet-500 text-white rounded-xl hover:bg-violet-600 transition shadow-sm shadow-violet-200 font-medium">
+                  <FilePlus size={14} /> File
+                </button>
+                <button onClick={() => setModal({ type: 'newFolder' })}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition shadow-sm shadow-blue-200 font-medium">
+                  <FolderPlus size={14} /> Folder
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+              <div className="grid grid-cols-[1fr_90px_150px_36px] gap-3 px-5 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-50">
+                <span>Name</span><span>Size</span><span>Modified</span><span></span>
+              </div>
+              {filteredFiles.length === 0 && (
+                <div className="py-20 text-center">
+                  <Folder size={40} className="mx-auto text-gray-200 mb-3" />
+                  <div className="text-sm text-gray-400">{searchQuery ? 'No matching files' : 'Empty folder'}</div>
+                </div>
+              )}
+              {filteredFiles.map(f => (
+                <div key={f.path}
+                  className="grid grid-cols-[1fr_90px_150px_36px] gap-3 px-5 py-3 items-center hover:bg-violet-50/40 border-b border-gray-50/80 cursor-pointer transition group"
+                  onClick={() => openFile(f)}
+                  onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, file: f }); }}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    {getFileIcon(f.name, f.isDir)}
+                    <span className="text-sm truncate font-medium text-gray-700">{f.name}</span>
+                  </div>
+                  <span className="text-[11px] text-gray-400">{f.isDir ? '—' : formatSize(f.size)}</span>
+                  <span className="text-[11px] text-gray-400">{formatDate(f.modified)}</span>
+                  <button onClick={(e) => { e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, file: f }); }}
+                    className="p-1 rounded-lg hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition">
+                    <MoreVertical size={13} className="text-gray-400" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2.5 text-[11px] text-gray-400 text-right">{files.length} items</div>
+          </div>
+        )}
+
+        {/* ═══ EDITOR ═══ */}
+        {activeView === 'editor' && editorFile && (
+          <div className="max-w-6xl mx-auto flex flex-col h-[calc(100vh-120px)]">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <button onClick={() => { setActiveView('files'); }}
+                  className="p-2 rounded-xl hover:bg-white text-gray-400 hover:text-gray-600 transition shadow-sm bg-white/60"><ArrowLeft size={16} /></button>
+                <div className="bg-white rounded-xl px-4 py-2 shadow-sm border border-gray-100">
+                  <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                    {getFileIcon(editorFile.name, false)} {editorFile.name}
+                    {editorDirty && <span className="w-2 h-2 bg-orange-400 rounded-full"></span>}
+                  </h2>
+                  <p className="text-[10px] text-gray-400">/{editorFile.path}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={saveFile}
+                  className={`flex items-center gap-1.5 px-4 py-2 text-xs rounded-xl transition font-medium shadow-sm ${editorDirty ? 'bg-violet-500 text-white hover:bg-violet-600 shadow-violet-200' : 'bg-gray-100 text-gray-400 cursor-default'}`}
+                  disabled={!editorDirty}><Save size={14} /> Save</button>
+                <button onClick={() => { setEditorFile(null); setActiveView('files'); }}
+                  className="p-2 rounded-xl hover:bg-white text-gray-400 hover:text-gray-600 transition shadow-sm bg-white/60"><X size={16} /></button>
+              </div>
+            </div>
+            <div className="flex-1 bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+              <div className="h-full flex">
+                <div className="w-12 bg-gray-50 border-r border-gray-100 pt-4 text-right pr-3 select-none overflow-hidden">
+                  {editorContent.split('\n').map((_, i) => (
+                    <div key={i} className="text-[11px] text-gray-300 leading-[1.65rem] font-mono">{i + 1}</div>
+                  ))}
+                </div>
                 <textarea
-                  ref={editorRef}
                   value={editorContent}
                   onChange={(e) => { setEditorContent(e.target.value); setEditorDirty(true); }}
-                  className="w-full h-full p-4 font-mono text-sm text-gray-800 bg-white resize-none focus:outline-none leading-relaxed"
+                  className="flex-1 p-4 font-mono text-sm text-gray-800 bg-white resize-none focus:outline-none leading-relaxed"
                   spellCheck={false}
                   onKeyDown={(e) => {
                     if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); saveFile(); }
                     if (e.key === 'Tab') {
                       e.preventDefault();
-                      const start = e.target.selectionStart;
-                      const end = e.target.selectionEnd;
-                      setEditorContent(editorContent.substring(0, start) + '  ' + editorContent.substring(end));
-                      setTimeout(() => { e.target.selectionStart = e.target.selectionEnd = start + 2; }, 0);
+                      const s = e.target.selectionStart, end = e.target.selectionEnd;
+                      setEditorContent(editorContent.substring(0, s) + '  ' + editorContent.substring(end));
+                      setTimeout(() => { e.target.selectionStart = e.target.selectionEnd = s + 2; }, 0);
                     }
                   }}
                 />
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Terminal View */}
-          {activeView === 'terminal' && (
-            <div className="max-w-6xl mx-auto h-[calc(100vh-130px)]">
-              <div className="bg-[#1a1b2e] rounded-xl overflow-hidden shadow-sm border border-gray-200 h-full">
-                <div className="flex items-center gap-2 px-4 py-2.5 bg-[#151627] border-b border-gray-700/30">
-                  <div className="w-3 h-3 rounded-full bg-red-400"></div>
-                  <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
-                  <div className="w-3 h-3 rounded-full bg-green-400"></div>
-                  <span className="ml-2 text-xs text-gray-400 font-mono">bash — dev-box</span>
-                </div>
-                <div id="terminal-box" className="h-[calc(100%-40px)] p-2"></div>
+        {/* ═══ TERMINAL ═══ */}
+        {activeView === 'terminal' && (
+          <div className="max-w-6xl mx-auto h-[calc(100vh-120px)]">
+            <div className="bg-[#0f1117] rounded-2xl overflow-hidden shadow-lg border border-gray-800/30 h-full">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#0a0b10] border-b border-white/5">
+                <div className="w-3 h-3 rounded-full bg-[#ff5f57]"></div>
+                <div className="w-3 h-3 rounded-full bg-[#febc2e]"></div>
+                <div className="w-3 h-3 rounded-full bg-[#28c840]"></div>
+                <span className="ml-3 text-[11px] text-gray-500 font-mono">{stats.hostname || 'dev-box'} — bash</span>
               </div>
+              <div id="terminal-box" className="h-[calc(100%-40px)] p-1"></div>
             </div>
-          )}
-        </main>
-      </div>
+          </div>
+        )}
+      </main>
 
-      {/* Context Menu */}
+      {/* ─── Context Menu ─── */}
       {contextMenu && (
-        <div className="fixed z-50 bg-white rounded-xl shadow-lg border border-gray-200 py-1 min-w-[180px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={e => e.stopPropagation()}>
+        <div className="fixed z-50 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 min-w-[170px] animate-fade-in"
+          style={{ left: contextMenu.x, top: contextMenu.y }} onClick={e => e.stopPropagation()}>
           {!contextMenu.file.isDir && (
-            <CtxItem icon={<Eye size={15} />} label="Open" onClick={() => { openFile(contextMenu.file); setContextMenu(null); }} />
+            <CtxItem icon={<Eye size={14} />} label="Open" onClick={() => { openFile(contextMenu.file); setContextMenu(null); }} />
           )}
-          <CtxItem icon={<Edit3 size={15} />} label="Rename" onClick={() => { setModal({ type: 'rename', file: contextMenu.file }); setContextMenu(null); }} />
-          <CtxItem icon={<Trash2 size={15} />} label="Delete" danger onClick={() => deleteItem(contextMenu.file)} />
+          {contextMenu.file.isDir && (
+            <CtxItem icon={<Folder size={14} />} label="Open folder" onClick={() => { fetchFiles(contextMenu.file.path); setContextMenu(null); }} />
+          )}
+          <CtxItem icon={<Edit3 size={14} />} label="Rename" onClick={() => { setModal({ type: 'rename', file: contextMenu.file }); setContextMenu(null); }} />
+          <div className="border-t border-gray-100 my-1"></div>
+          <CtxItem icon={<Trash2 size={14} />} label="Delete" danger onClick={() => deleteItem(contextMenu.file)} />
         </div>
       )}
 
-      {/* Modal */}
+      {/* ─── Modal ─── */}
       {modal && <Modal modal={modal} setModal={setModal} createItem={createItem} renameItem={renameItem} />}
 
-      {/* Notification */}
+      {/* ─── Notification ─── */}
       {notification && (
-        <div className={`fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium ${notification.type === 'error' ? 'bg-red-500 text-white' : 'bg-gray-800 text-white'} animate-slide-up`}>
+        <div className={`fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium animate-slide-up ${notification.type === 'error' ? 'bg-red-500 text-white' : 'bg-gray-900 text-white'}`}>
           {notification.msg}
         </div>
       )}
 
       {editorLoading && (
-        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50">
-          <div className="bg-white px-6 py-4 rounded-xl shadow-lg text-sm text-gray-600">Loading file...</div>
+        <div className="fixed inset-0 bg-black/10 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white px-6 py-4 rounded-2xl shadow-xl text-sm text-gray-600">Loading...</div>
         </div>
       )}
     </div>
   );
 }
 
-function StatPill({ icon, value, sub, color }) {
-  const colors = {
-    blue: 'bg-blue-50 text-blue-600',
-    violet: 'bg-violet-50 text-violet-600',
-    emerald: 'bg-emerald-50 text-emerald-600',
-  };
+// ─── Sub-components ────────────────────────────────────────
+function InfoItem({ label, value }) {
   return (
-    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg ${colors[color]}`}>
-      {icon}
-      <span className="text-xs font-medium">{value}</span>
-      {sub && <span className="text-[10px] opacity-60">{sub}</span>}
+    <div className="bg-gray-50 rounded-xl p-3">
+      <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-xs font-semibold text-gray-700 truncate">{value}</div>
     </div>
-  );
-}
-
-function SidebarBtn({ active, onClick, icon, label, badge }) {
-  return (
-    <button onClick={onClick}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm w-full text-left transition ${active ? 'bg-violet-50 text-violet-700 font-medium' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}>
-      {icon}
-      <span className="truncate flex-1">{label}</span>
-      {badge && <span className="w-5 h-5 rounded-full bg-orange-400 text-white text-[10px] flex items-center justify-center font-bold">{badge}</span>}
-    </button>
   );
 }
 
 function CtxItem({ icon, label, onClick, danger }) {
   return (
     <button onClick={onClick}
-      className={`flex items-center gap-2.5 px-3 py-2 text-sm w-full text-left hover:bg-gray-50 transition ${danger ? 'text-red-500 hover:bg-red-50' : 'text-gray-700'}`}>
+      className={`flex items-center gap-2.5 px-3.5 py-2 text-xs w-full text-left hover:bg-gray-50 transition font-medium ${danger ? 'text-red-500 hover:bg-red-50' : 'text-gray-600'}`}>
       {icon} {label}
     </button>
   );
@@ -454,18 +593,18 @@ function Modal({ modal, setModal, createItem, renameItem }) {
   const titles = { newFile: 'New File', newFolder: 'New Folder', rename: 'Rename' };
 
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setModal(null)}>
+    <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setModal(null)}>
       <form onSubmit={handleSubmit} onClick={e => e.stopPropagation()}
-        className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm">
-        <h3 className="text-base font-semibold text-gray-900 mb-4">{titles[modal.type]}</h3>
+        className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-gray-100 animate-scale-in">
+        <h3 className="text-sm font-bold text-gray-900 mb-4">{titles[modal.type]}</h3>
         <input ref={inputRef} value={name} onChange={e => setName(e.target.value)}
           placeholder="Enter name..." autoFocus
-          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100 mb-4" />
+          className="w-full px-3.5 py-2.5 text-sm border border-gray-200 rounded-xl focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100 mb-4 transition" />
         <div className="flex justify-end gap-2">
           <button type="button" onClick={() => setModal(null)}
-            className="px-4 py-2 text-sm text-gray-500 hover:bg-gray-50 rounded-lg transition">Cancel</button>
+            className="px-4 py-2 text-xs text-gray-500 hover:bg-gray-50 rounded-xl transition font-medium">Cancel</button>
           <button type="submit"
-            className="px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition">
+            className="px-5 py-2 text-xs bg-violet-500 text-white rounded-xl hover:bg-violet-600 transition font-medium shadow-sm shadow-violet-200">
             {modal.type === 'rename' ? 'Rename' : 'Create'}
           </button>
         </div>
