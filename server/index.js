@@ -35,29 +35,79 @@ function safePath(userPath, root = HOST_ROOT) {
 // --- SYSTEM STATS ---
 let cachedStats = {};
 
+// Read container-aware CPU and memory limits from cgroups
+async function getContainerCores() {
+    try {
+        // cgroup v2
+        const quota = await fs.readFile('/sys/fs/cgroup/cpu.max', 'utf-8');
+        const parts = quota.trim().split(' ');
+        if (parts[0] !== 'max') return Math.round(parseInt(parts[0]) / parseInt(parts[1]));
+    } catch (e) {}
+    try {
+        // cgroup v1
+        const quota = parseInt(await fs.readFile('/sys/fs/cgroup/cpu/cpu.cfs_quota_us', 'utf-8'));
+        const period = parseInt(await fs.readFile('/sys/fs/cgroup/cpu/cpu.cfs_period_us', 'utf-8'));
+        if (quota > 0) return Math.round(quota / period);
+    } catch (e) {}
+    // fallback: count from nproc-equivalent (online CPUs)
+    return os.cpus().length;
+}
+
+async function getContainerMemory() {
+    try {
+        // cgroup v2
+        const limit = parseInt(await fs.readFile('/sys/fs/cgroup/memory.max', 'utf-8'));
+        if (!isNaN(limit)) return limit;
+    } catch (e) {}
+    try {
+        // cgroup v1
+        const limit = parseInt(await fs.readFile('/sys/fs/cgroup/memory/memory.limit_in_bytes', 'utf-8'));
+        // If limit is very large (close to max int), it means no limit set
+        if (!isNaN(limit) && limit < 2 ** 62) return limit;
+    } catch (e) {}
+    return os.totalmem();
+}
+
+async function getContainerMemUsage() {
+    try {
+        // cgroup v2
+        const usage = parseInt(await fs.readFile('/sys/fs/cgroup/memory.current', 'utf-8'));
+        if (!isNaN(usage)) return usage;
+    } catch (e) {}
+    try {
+        // cgroup v1
+        const usage = parseInt(await fs.readFile('/sys/fs/cgroup/memory/memory.usage_in_bytes', 'utf-8'));
+        if (!isNaN(usage)) return usage;
+    } catch (e) {}
+    return os.totalmem() - os.freemem();
+}
+
 async function collectStats() {
     try {
-        const [cpu, cpuTemp, mem, fsSize, networkStats] = await Promise.all([
+        const [cpu, cpuTemp, fsSize, networkStats, containerCores, containerMemTotal, containerMemUsed] = await Promise.all([
             si.currentLoad(),
             si.cpuTemperature(),
-            si.mem(),
             si.fsSize(),
             si.networkStats(),
+            getContainerCores(),
+            getContainerMemory(),
+            getContainerMemUsage(),
         ]);
         const disk = fsSize.find(f => f.mount === '/host') || fsSize.find(f => f.mount === '/') || fsSize[0];
         const net = networkStats[0] || {};
 
+        const ramTotalGB = containerMemTotal / (1024 * 1024 * 1024);
+        const ramUsedGB = containerMemUsed / (1024 * 1024 * 1024);
+
         cachedStats = {
             cpu: parseFloat(cpu.currentLoad.toFixed(1)),
-            cpuCores: os.cpus().length,
+            cpuCores: containerCores,
             cpuModel: os.cpus()[0]?.model || 'Unknown',
             cpuTemp: cpuTemp.main || null,
             cpuTempMax: cpuTemp.max || null,
-            ram: parseFloat((mem.active / 1024 / 1024 / 1024).toFixed(2)),
-            ramTotal: parseFloat((mem.total / 1024 / 1024 / 1024).toFixed(1)),
-            ramPercent: parseFloat(((mem.active / mem.total) * 100).toFixed(1)),
-            swap: parseFloat((mem.swapused / 1024 / 1024 / 1024).toFixed(2)),
-            swapTotal: parseFloat((mem.swaptotal / 1024 / 1024 / 1024).toFixed(1)),
+            ram: parseFloat(ramUsedGB.toFixed(2)),
+            ramTotal: parseFloat(ramTotalGB.toFixed(1)),
+            ramPercent: parseFloat(((ramUsedGB / ramTotalGB) * 100).toFixed(1)),
             storageUsed: parseFloat(((disk?.used || 0) / 1024 / 1024 / 1024).toFixed(1)),
             storageTotal: parseFloat(((disk?.size || 0) / 1024 / 1024 / 1024).toFixed(1)),
             storagePercent: parseFloat(disk?.use?.toFixed(1) || 0),

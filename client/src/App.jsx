@@ -377,7 +377,7 @@ export default function App() {
                 <InfoItem label="Hostname" value={stats.hostname || '—'} />
                 <InfoItem label="CPU" value={stats.cpuModel || '—'} />
                 <InfoItem label="Platform" value={stats.platform || '—'} />
-                <InfoItem label="Swap" value={stats.swapTotal ? `${stats.swap} / ${stats.swapTotal} GB` : 'None'} />
+                <InfoItem label="Cores" value={`${stats.cpuCores || '—'} vCPU`} />
               </div>
             </div>
           </div>
