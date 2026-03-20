@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   dash-api:
     build: ./server
@@ -8,9 +6,9 @@ services:
     ports:
       - "3005:3005"
     volumes:
-      - /:/rootfs:ro # Allows the container to read your Enclave's files
-    environment:
-      - NODE_ENV=production
+      - /:/host:ro # System Monitoring
+      - /home/ubuntu/projects:/app/projects # Terminal workspace
+    env_file: .env
 
   dash-ui:
     build: ./client
@@ -20,3 +18,4 @@ services:
       - "5173:5173"
     depends_on:
       - dash-api
+    env_file: .env
