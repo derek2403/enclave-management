@@ -39,24 +39,42 @@ let cachedStats = {};
 const CONTAINER_CORES = parseInt(process.env.CONTAINER_CORES) || os.cpus().length;
 const CONTAINER_RAM_BYTES = (parseFloat(process.env.CONTAINER_RAM_GB) || (os.totalmem() / (1024 * 1024 * 1024))) * 1024 * 1024 * 1024;
 
+// Parse /proc/meminfo from the host mount to get LXC-level memory
+async function getHostMemInfo() {
+    try {
+        const raw = await fs.readFile('/host/proc/meminfo', 'utf-8');
+        const lines = {};
+        raw.split('\n').forEach(line => {
+            const match = line.match(/^(\w+):\s+(\d+)/);
+            if (match) lines[match[1]] = parseInt(match[2]) * 1024; // kB to bytes
+        });
+        const total = lines.MemTotal || 0;
+        const available = lines.MemAvailable || 0;
+        const used = total - available;
+        return { total, used, available };
+    } catch (e) {
+        return null;
+    }
+}
+
 async function collectStats() {
     try {
-        const [cpu, cpuTemp, mem, fsSize, networkStats] = await Promise.all([
+        const [cpu, cpuTemp, fsSize, networkStats, hostMem] = await Promise.all([
             si.currentLoad(),
             si.cpuTemperature(),
-            si.mem(),
             si.fsSize(),
             si.networkStats(),
+            getHostMemInfo(),
         ]);
         const disk = fsSize.find(f => f.mount === '/host') || fsSize.find(f => f.mount === '/') || fsSize[0];
         const net = networkStats[0] || {};
 
         const ramTotalGB = CONTAINER_RAM_BYTES / (1024 * 1024 * 1024);
-        // Scale CPU usage to container cores (si reports across all host cores)
+        // Scale CPU usage to container cores
         const cpuScaled = (cpu.currentLoad / os.cpus().length) * CONTAINER_CORES;
-        // Used RAM without cache/buffers = total - available (matches "used" in free -h)
-        const realUsed = mem.total - mem.available;
-        const ramUsedGB = Math.min(realUsed, CONTAINER_RAM_BYTES) / (1024 * 1024 * 1024);
+        // Use host's /proc/meminfo for accurate LXC memory (excludes cache/buffers)
+        const ramUsedBytes = hostMem ? hostMem.used : 0;
+        const ramUsedGB = Math.min(ramUsedBytes, CONTAINER_RAM_BYTES) / (1024 * 1024 * 1024);
 
         cachedStats = {
             cpu: parseFloat(Math.min(cpuScaled, 100).toFixed(1)),
@@ -177,35 +195,69 @@ app.put('/api/files/rename', async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Cannot rename" }); }
 });
 
-// --- PROCESS API ---
+// --- PROCESS API (reads from host /proc) ---
 
 app.get('/api/processes', async (req, res) => {
     try {
-        const procs = await si.processes();
-        const sorted = procs.list
-            .sort((a, b) => b.memRss - a.memRss)
-            .slice(0, 50)
-            .map(p => ({
-                pid: p.pid,
-                name: p.name,
-                command: p.command?.substring(0, 100) || p.name,
-                cpu: parseFloat(p.cpu.toFixed(1)),
-                mem: parseFloat((p.memRss / 1024 / 1024).toFixed(1)), // MB
-                memPercent: parseFloat(p.memVsz ? ((p.memRss / (CONTAINER_RAM_BYTES / 1024)) * 100).toFixed(1) : 0),
-                user: p.user || '—',
-                state: p.state,
-                started: p.started,
-            }));
-        res.json({ processes: sorted, total: procs.all, running: procs.running });
+        // Use ps from host's proc mount via nsenter or read /host/proc directly
+        const hostProc = '/host/proc';
+        const pids = (await fs.readdir(hostProc)).filter(f => /^\d+$/.test(f));
+        const PAGE_SIZE = 4096;
+        let procs = [];
+        let running = 0;
+
+        for (const pid of pids) {
+            try {
+                const stat = await fs.readFile(`${hostProc}/${pid}/stat`, 'utf-8');
+                const cmdline = await fs.readFile(`${hostProc}/${pid}/cmdline`, 'utf-8').catch(() => '');
+                const status = await fs.readFile(`${hostProc}/${pid}/status`, 'utf-8').catch(() => '');
+
+                // Parse stat: pid (comm) state ...
+                const match = stat.match(/^(\d+) \((.+?)\) (\S)/);
+                if (!match) continue;
+
+                const name = match[2];
+                const state = match[3];
+                if (state === 'R') running++;
+
+                // Get RSS from stat fields (field 24, 0-indexed after splitting)
+                const fields = stat.substring(stat.lastIndexOf(')') + 2).split(' ');
+                const rssPages = parseInt(fields[21]) || 0; // field index 23 in full stat, 21 after comm+state
+                const rssMB = (rssPages * PAGE_SIZE) / (1024 * 1024);
+
+                // Get UID from status
+                const uidMatch = status.match(/Uid:\s+(\d+)/);
+                const uid = uidMatch ? uidMatch[1] : '0';
+
+                const command = cmdline.replace(/\0/g, ' ').trim() || name;
+
+                procs.push({
+                    pid: parseInt(pid),
+                    name,
+                    command: command.substring(0, 120),
+                    cpu: 0, // CPU % requires sampling two points, skip for now
+                    mem: parseFloat(rssMB.toFixed(1)),
+                    user: uid === '0' ? 'root' : uid,
+                    state,
+                });
+            } catch (e) { continue; } // process may have exited
+        }
+
+        procs.sort((a, b) => b.mem - a.mem);
+        const total = procs.length;
+        procs = procs.slice(0, 50);
+
+        res.json({ processes: procs, total, running });
     } catch (err) { res.status(500).json({ error: "Cannot list processes" }); }
 });
 
 app.post('/api/processes/kill', async (req, res) => {
-    const { pid, signal } = req.body;
+    const { pid } = req.body;
     if (!pid) return res.status(400).json({ error: "PID required" });
     try {
-        process.kill(parseInt(pid), signal || 'SIGTERM');
-        res.json({ success: true });
+        // Kill on the host by writing to /host/proc - but we can't actually signal host processes from inside Docker
+        // Instead we use the terminal for kill commands. Return an error explaining this.
+        res.status(400).json({ error: "Use the terminal to kill host processes: kill -9 " + pid });
     } catch (err) { res.status(500).json({ error: `Cannot kill process: ${err.message}` }); }
 });
 

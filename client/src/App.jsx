@@ -362,20 +362,34 @@ export default function App() {
             <div className="col-span-2 bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
               <h3 className="text-xs font-bold text-gray-700 mb-4">Quick Actions</h3>
               <div className="grid grid-cols-4 gap-3">
-                {[
-                  { view: 'files', fn: () => { setActiveView('files'); fetchFiles(''); }, icon: <Folder size={18} />, label: 'Files', color: 'blue' },
-                  { view: 'terminal', fn: () => setActiveView('terminal'), icon: <TermIcon size={18} />, label: 'Terminal', color: 'violet' },
-                  { view: 'processes', fn: () => setActiveView('processes'), icon: <ListTree size={18} />, label: 'Processes', color: 'orange' },
-                  { view: 'docker', fn: () => setActiveView('docker'), icon: <Box size={18} />, label: 'Docker', color: 'cyan' },
-                ].map(a => (
-                  <button key={a.view} onClick={a.fn}
-                    className={`flex flex-col items-center gap-2 p-4 rounded-xl bg-${a.color}-50 hover:bg-${a.color}-100 transition group`}>
-                    <div className={`w-10 h-10 bg-${a.color}-500 rounded-xl flex items-center justify-center shadow-md shadow-${a.color}-200 group-hover:scale-105 transition`}>
-                      {React.cloneElement(a.icon, { className: 'text-white' })}
-                    </div>
-                    <span className="text-[11px] font-medium text-gray-700">{a.label}</span>
-                  </button>
-                ))}
+                <button onClick={() => { setActiveView('files'); fetchFiles(''); }}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl bg-blue-50 hover:bg-blue-100 transition group">
+                  <div className="w-10 h-10 bg-blue-500 rounded-xl flex items-center justify-center shadow-md shadow-blue-200 group-hover:scale-105 transition">
+                    <Folder size={18} className="text-white" />
+                  </div>
+                  <span className="text-[11px] font-medium text-gray-700">Files</span>
+                </button>
+                <button onClick={() => setActiveView('terminal')}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl bg-violet-50 hover:bg-violet-100 transition group">
+                  <div className="w-10 h-10 bg-violet-500 rounded-xl flex items-center justify-center shadow-md shadow-violet-200 group-hover:scale-105 transition">
+                    <TermIcon size={18} className="text-white" />
+                  </div>
+                  <span className="text-[11px] font-medium text-gray-700">Terminal</span>
+                </button>
+                <button onClick={() => setActiveView('processes')}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl bg-orange-50 hover:bg-orange-100 transition group">
+                  <div className="w-10 h-10 bg-orange-500 rounded-xl flex items-center justify-center shadow-md shadow-orange-200 group-hover:scale-105 transition">
+                    <ListTree size={18} className="text-white" />
+                  </div>
+                  <span className="text-[11px] font-medium text-gray-700">Processes</span>
+                </button>
+                <button onClick={() => setActiveView('docker')}
+                  className="flex flex-col items-center gap-2 p-4 rounded-xl bg-cyan-50 hover:bg-cyan-100 transition group">
+                  <div className="w-10 h-10 bg-cyan-500 rounded-xl flex items-center justify-center shadow-md shadow-cyan-200 group-hover:scale-105 transition">
+                    <Box size={18} className="text-white" />
+                  </div>
+                  <span className="text-[11px] font-medium text-gray-700">Docker</span>
+                </button>
               </div>
             </div>
             <div className="col-span-4 bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
