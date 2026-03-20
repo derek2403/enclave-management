@@ -54,8 +54,9 @@ async function collectStats() {
         const ramTotalGB = CONTAINER_RAM_BYTES / (1024 * 1024 * 1024);
         // Scale CPU usage to container cores (si reports across all host cores)
         const cpuScaled = (cpu.currentLoad / os.cpus().length) * CONTAINER_CORES;
-        // Use mem.active but cap at container limit
-        const ramUsedGB = Math.min(mem.active, CONTAINER_RAM_BYTES) / (1024 * 1024 * 1024);
+        // Used RAM without cache/buffers = total - available (matches "used" in free -h)
+        const realUsed = mem.total - mem.available;
+        const ramUsedGB = Math.min(realUsed, CONTAINER_RAM_BYTES) / (1024 * 1024 * 1024);
 
         cachedStats = {
             cpu: parseFloat(Math.min(cpuScaled, 100).toFixed(1)),
@@ -174,6 +175,117 @@ app.put('/api/files/rename', async (req, res) => {
         await fs.rename(oldPath, newPath);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: "Cannot rename" }); }
+});
+
+// --- PROCESS API ---
+
+app.get('/api/processes', async (req, res) => {
+    try {
+        const procs = await si.processes();
+        const sorted = procs.list
+            .sort((a, b) => b.memRss - a.memRss)
+            .slice(0, 50)
+            .map(p => ({
+                pid: p.pid,
+                name: p.name,
+                command: p.command?.substring(0, 100) || p.name,
+                cpu: parseFloat(p.cpu.toFixed(1)),
+                mem: parseFloat((p.memRss / 1024 / 1024).toFixed(1)), // MB
+                memPercent: parseFloat(p.memVsz ? ((p.memRss / (CONTAINER_RAM_BYTES / 1024)) * 100).toFixed(1) : 0),
+                user: p.user || '—',
+                state: p.state,
+                started: p.started,
+            }));
+        res.json({ processes: sorted, total: procs.all, running: procs.running });
+    } catch (err) { res.status(500).json({ error: "Cannot list processes" }); }
+});
+
+app.post('/api/processes/kill', async (req, res) => {
+    const { pid, signal } = req.body;
+    if (!pid) return res.status(400).json({ error: "PID required" });
+    try {
+        process.kill(parseInt(pid), signal || 'SIGTERM');
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: `Cannot kill process: ${err.message}` }); }
+});
+
+// --- DOCKER API ---
+async function dockerRequest(socketPath, method, endpoint, body) {
+    return new Promise((resolve, reject) => {
+        const options = { socketPath, path: endpoint, method, headers: {} };
+        if (body) {
+            const data = JSON.stringify(body);
+            options.headers['Content-Type'] = 'application/json';
+            options.headers['Content-Length'] = Buffer.byteLength(data);
+        }
+        const req = http.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try { resolve({ status: res.statusCode, data: JSON.parse(data || '{}') }); }
+                catch { resolve({ status: res.statusCode, data: data }); }
+            });
+        });
+        req.on('error', reject);
+        if (body) req.write(JSON.stringify(body));
+        req.end();
+    });
+}
+
+const DOCKER_SOCK = '/var/run/docker.sock';
+
+app.get('/api/docker/containers', async (req, res) => {
+    try {
+        const { data } = await dockerRequest(DOCKER_SOCK, 'GET', '/containers/json?all=true');
+        const containers = data.map(c => ({
+            id: c.Id.substring(0, 12),
+            name: (c.Names[0] || '').replace(/^\//, ''),
+            image: c.Image,
+            state: c.State,
+            status: c.Status,
+            ports: (c.Ports || []).map(p => p.PublicPort ? `${p.PublicPort}:${p.PrivatePort}` : `${p.PrivatePort}`).filter(Boolean),
+            created: c.Created,
+        }));
+        res.json(containers);
+    } catch (err) { res.status(500).json({ error: "Cannot connect to Docker" }); }
+});
+
+app.post('/api/docker/:action/:id', async (req, res) => {
+    const { action, id } = req.params;
+    const allowed = ['start', 'stop', 'restart', 'pause', 'unpause'];
+    if (!allowed.includes(action)) return res.status(400).json({ error: "Invalid action" });
+    try {
+        const { status } = await dockerRequest(DOCKER_SOCK, 'POST', `/containers/${id}/${action}`);
+        if (status < 300) res.json({ success: true });
+        else res.status(status).json({ error: `Docker returned ${status}` });
+    } catch (err) { res.status(500).json({ error: "Docker action failed" }); }
+});
+
+app.get('/api/docker/logs/:id', async (req, res) => {
+    try {
+        const tail = req.query.tail || 100;
+        const { data } = await dockerRequest(DOCKER_SOCK, 'GET', `/containers/${req.params.id}/logs?stdout=true&stderr=true&tail=${tail}`);
+        // Docker logs have 8-byte header per line, strip it for display
+        const clean = typeof data === 'string' ? data.replace(/[\x00-\x08]/g, '') : JSON.stringify(data);
+        res.json({ logs: clean });
+    } catch (err) { res.status(500).json({ error: "Cannot get logs" }); }
+});
+
+app.get('/api/docker/stats/:id', async (req, res) => {
+    try {
+        const { data } = await dockerRequest(DOCKER_SOCK, 'GET', `/containers/${req.params.id}/stats?stream=false`);
+        const cpuDelta = data.cpu_stats?.cpu_usage?.total_usage - data.precpu_stats?.cpu_usage?.total_usage;
+        const systemDelta = data.cpu_stats?.system_cpu_usage - data.precpu_stats?.system_cpu_usage;
+        const cpuPercent = systemDelta > 0 ? ((cpuDelta / systemDelta) * (data.cpu_stats?.online_cpus || 1) * 100).toFixed(1) : 0;
+        const memUsage = data.memory_stats?.usage || 0;
+        const memLimit = data.memory_stats?.limit || 1;
+        res.json({
+            cpu: parseFloat(cpuPercent),
+            mem: parseFloat((memUsage / 1024 / 1024).toFixed(1)),
+            memLimit: parseFloat((memLimit / 1024 / 1024).toFixed(1)),
+            memPercent: parseFloat(((memUsage / memLimit) * 100).toFixed(1)),
+        });
+    } catch (err) { res.status(500).json({ error: "Cannot get stats" }); }
 });
 
 // --- TERMINAL LOGIC ---

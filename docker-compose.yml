@@ -9,6 +9,7 @@ services:
       - /:/host:ro # System stats & read-only browsing
       - /home/ubuntu:/data # User home — read/write for file manager
       - /home/ubuntu/projects:/app/projects # Terminal workspace
+      - /var/run/docker.sock:/var/run/docker.sock # Docker management
     env_file: .env
 
   dash-ui:
