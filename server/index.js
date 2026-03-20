@@ -35,73 +35,31 @@ function safePath(userPath, root = HOST_ROOT) {
 // --- SYSTEM STATS ---
 let cachedStats = {};
 
-// Read container-aware CPU and memory limits from cgroups
-async function getContainerCores() {
-    try {
-        // cgroup v2
-        const quota = await fs.readFile('/sys/fs/cgroup/cpu.max', 'utf-8');
-        const parts = quota.trim().split(' ');
-        if (parts[0] !== 'max') return Math.round(parseInt(parts[0]) / parseInt(parts[1]));
-    } catch (e) {}
-    try {
-        // cgroup v1
-        const quota = parseInt(await fs.readFile('/sys/fs/cgroup/cpu/cpu.cfs_quota_us', 'utf-8'));
-        const period = parseInt(await fs.readFile('/sys/fs/cgroup/cpu/cpu.cfs_period_us', 'utf-8'));
-        if (quota > 0) return Math.round(quota / period);
-    } catch (e) {}
-    // fallback: count from nproc-equivalent (online CPUs)
-    return os.cpus().length;
-}
-
-async function getContainerMemory() {
-    try {
-        // cgroup v2
-        const limit = parseInt(await fs.readFile('/sys/fs/cgroup/memory.max', 'utf-8'));
-        if (!isNaN(limit)) return limit;
-    } catch (e) {}
-    try {
-        // cgroup v1
-        const limit = parseInt(await fs.readFile('/sys/fs/cgroup/memory/memory.limit_in_bytes', 'utf-8'));
-        // If limit is very large (close to max int), it means no limit set
-        if (!isNaN(limit) && limit < 2 ** 62) return limit;
-    } catch (e) {}
-    return os.totalmem();
-}
-
-async function getContainerMemUsage() {
-    try {
-        // cgroup v2
-        const usage = parseInt(await fs.readFile('/sys/fs/cgroup/memory.current', 'utf-8'));
-        if (!isNaN(usage)) return usage;
-    } catch (e) {}
-    try {
-        // cgroup v1
-        const usage = parseInt(await fs.readFile('/sys/fs/cgroup/memory/memory.usage_in_bytes', 'utf-8'));
-        if (!isNaN(usage)) return usage;
-    } catch (e) {}
-    return os.totalmem() - os.freemem();
-}
+// Container resource limits from env vars (LXC limits aren't visible inside nested Docker)
+const CONTAINER_CORES = parseInt(process.env.CONTAINER_CORES) || os.cpus().length;
+const CONTAINER_RAM_BYTES = (parseFloat(process.env.CONTAINER_RAM_GB) || (os.totalmem() / (1024 * 1024 * 1024))) * 1024 * 1024 * 1024;
 
 async function collectStats() {
     try {
-        const [cpu, cpuTemp, fsSize, networkStats, containerCores, containerMemTotal, containerMemUsed] = await Promise.all([
+        const [cpu, cpuTemp, mem, fsSize, networkStats] = await Promise.all([
             si.currentLoad(),
             si.cpuTemperature(),
+            si.mem(),
             si.fsSize(),
             si.networkStats(),
-            getContainerCores(),
-            getContainerMemory(),
-            getContainerMemUsage(),
         ]);
         const disk = fsSize.find(f => f.mount === '/host') || fsSize.find(f => f.mount === '/') || fsSize[0];
         const net = networkStats[0] || {};
 
-        const ramTotalGB = containerMemTotal / (1024 * 1024 * 1024);
-        const ramUsedGB = containerMemUsed / (1024 * 1024 * 1024);
+        const ramTotalGB = CONTAINER_RAM_BYTES / (1024 * 1024 * 1024);
+        // Scale CPU usage to container cores (si reports across all host cores)
+        const cpuScaled = (cpu.currentLoad / os.cpus().length) * CONTAINER_CORES;
+        // Use mem.active but cap at container limit
+        const ramUsedGB = Math.min(mem.active, CONTAINER_RAM_BYTES) / (1024 * 1024 * 1024);
 
         cachedStats = {
-            cpu: parseFloat(cpu.currentLoad.toFixed(1)),
-            cpuCores: containerCores,
+            cpu: parseFloat(Math.min(cpuScaled, 100).toFixed(1)),
+            cpuCores: CONTAINER_CORES,
             cpuModel: os.cpus()[0]?.model || 'Unknown',
             cpuTemp: cpuTemp.main || null,
             cpuTempMax: cpuTemp.max || null,
