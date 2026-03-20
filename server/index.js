@@ -9,14 +9,15 @@ const cors = require('cors');
 const os = require('os');
 
 const app = express();
+const corsOrigin = process.env.CORS_ORIGIN || '*';
 app.use(cors({
-  origin: process.env.CORS_ORIGIN,
+  origin: corsOrigin === '*' ? true : corsOrigin,
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 }));
 app.use(express.json({ limit: '5mb' }));
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: process.env.CORS_ORIGIN, credentials: true } });
+const io = new Server(server, { cors: { origin: corsOrigin === '*' ? true : corsOrigin, credentials: true } });
 
 const HOST_ROOT = '/host';       // read-only full host filesystem (for stats)
 const DATA_ROOT = '/data';       // read-write user home (/home/ubuntu)

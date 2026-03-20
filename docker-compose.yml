@@ -1,10 +1,22 @@
 services:
+  nginx:
+    image: nginx:alpine
+    container_name: enclave-proxy
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - dash-api
+      - dash-ui
+
   dash-api:
     build: ./server
     container_name: enclave-api
     restart: always
-    ports:
-      - "3005:3005"
+    expose:
+      - "3005"
     volumes:
       - /:/host:ro # System stats & read-only browsing
       - /home/ubuntu:/data # User home — read/write for file manager
@@ -16,12 +28,12 @@ services:
     build:
       context: ./client
       args:
-        VITE_API_DOMAIN: ${VITE_API_DOMAIN}
+        VITE_API_DOMAIN: ""
         VITE_DASHBOARD_DOMAIN: ${VITE_DASHBOARD_DOMAIN}
     container_name: enclave-ui
     restart: always
-    ports:
-      - "5173:5173"
+    expose:
+      - "5173"
     depends_on:
       - dash-api
     env_file: .env

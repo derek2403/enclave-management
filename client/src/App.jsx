@@ -11,8 +11,8 @@ import { Terminal } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 
-const API_URL = `https://${import.meta.env.VITE_API_DOMAIN}`;
-const socket = io(API_URL, { withCredentials: true });
+const API_URL = import.meta.env.VITE_API_DOMAIN ? `https://${import.meta.env.VITE_API_DOMAIN}` : '';
+const socket = io(API_URL || window.location.origin, { withCredentials: true });
 const fetchOpts = { credentials: 'include' };
 
 function formatSize(bytes) {
