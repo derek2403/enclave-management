@@ -113,7 +113,7 @@ export default function App() {
   }, [notify, showHidden]);
 
   useEffect(() => {
-    if (activeView !== 'terminal' || termInitRef.current) return;
+    if (termInitRef.current) return;
     termInitRef.current = true;
     setTimeout(() => {
       const el = document.getElementById('terminal-box');
@@ -133,7 +133,7 @@ export default function App() {
       termRef.current = term;
     }, 100);
     return () => { socket.off('terminal_output'); };
-  }, [activeView]);
+  }, []);
 
   // Processes
   const fetchProcesses = useCallback(async () => {
@@ -614,20 +614,18 @@ export default function App() {
           </div>
         )}
 
-        {/* ═══ TERMINAL ═══ */}
-        {activeView === 'terminal' && (
-          <div className="max-w-6xl mx-auto h-[calc(100vh-120px)]">
-            <div className="bg-[#0f1117] rounded-2xl overflow-hidden shadow-lg border border-gray-800/30 h-full">
-              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#0a0b10] border-b border-white/5">
-                <div className="w-3 h-3 rounded-full bg-[#ff5f57]"></div>
-                <div className="w-3 h-3 rounded-full bg-[#febc2e]"></div>
-                <div className="w-3 h-3 rounded-full bg-[#28c840]"></div>
-                <span className="ml-3 text-[11px] text-gray-500 font-mono">{stats.hostname || 'dev-box'} — bash</span>
-              </div>
-              <div id="terminal-box" className="h-[calc(100%-40px)] p-1"></div>
+        {/* ═══ TERMINAL (always mounted, hidden via CSS to preserve state) ═══ */}
+        <div className={`max-w-6xl mx-auto h-[calc(100vh-120px)] ${activeView === 'terminal' ? '' : 'hidden'}`}>
+          <div className="bg-[#0f1117] rounded-2xl overflow-hidden shadow-lg border border-gray-800/30 h-full">
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-[#0a0b10] border-b border-white/5">
+              <div className="w-3 h-3 rounded-full bg-[#ff5f57]"></div>
+              <div className="w-3 h-3 rounded-full bg-[#febc2e]"></div>
+              <div className="w-3 h-3 rounded-full bg-[#28c840]"></div>
+              <span className="ml-3 text-[11px] text-gray-500 font-mono">{stats.hostname || 'dev-box'} — bash</span>
             </div>
+            <div id="terminal-box" className="h-[calc(100%-40px)] p-1"></div>
           </div>
-        )}
+        </div>
       </main>
 
       {/* Context Menu */}
