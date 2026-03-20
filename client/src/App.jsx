@@ -6,7 +6,7 @@ import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 
 const API_URL = `https://${import.meta.env.VITE_API_DOMAIN}`;
-const socket = io(API_URL);
+const socket = io(API_URL, { withCredentials: true });
 
 export default function App() {
   const [stats, setStats] = useState({ cpu: 0, ram: 0, storage: 0 });
@@ -33,7 +33,9 @@ export default function App() {
   }, []);
 
   const fetchFiles = async (path) => {
-    const res = await fetch(`${API_URL}/api/files/list?path=${encodeURIComponent(path)}`);
+    const res = await fetch(`${API_URL}/api/files/list?path=${encodeURIComponent(path)}`, {
+      credentials: 'include'
+    });
     const data = await res.json();
     setFiles(data.sort((a, b) => b.isDir - a.isDir));
     setCurrentPath(path);

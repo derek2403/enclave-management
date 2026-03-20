@@ -8,9 +8,13 @@ const path = require('path');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN,
+  credentials: true,
+  methods: ["GET", "POST", "OPTIONS"]
+}));
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, { cors: { origin: process.env.CORS_ORIGIN, credentials: true } });
 
 const HOST_ROOT = '/host';
 
